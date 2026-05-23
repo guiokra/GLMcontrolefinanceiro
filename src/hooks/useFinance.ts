@@ -1,10 +1,136 @@
 import { useState, useEffect } from 'react';
 import { Category, Transaction, FinanceData } from '../types';
 import { getDefaultCategories } from '../utils';
+import { db, auth } from '../lib/firebase';
+import { 
+  onAuthStateChanged, 
+  User as FirebaseUser, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut 
+} from 'firebase/auth';
+import { 
+  doc, 
+  collection, 
+  onSnapshot, 
+  setDoc, 
+  deleteDoc, 
+  writeBatch,
+  getDoc
+} from 'firebase/firestore';
 
 const STORAGE_KEY = 'controle_financeiro_data_v1';
 
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+function getInitialSimulationData(): FinanceData {
+  const initialCategories = getDefaultCategories();
+  
+  const startMarch = '2026-03';
+  const startJan = '2026-01';
+  const startMay = '2026-05';
+
+  const initialTransactions: Transaction[] = [
+    {
+      id: 'tx-sim-1',
+      title: 'Geladeira Inox (5 parcelas)',
+      categoryId: 'cat-housing',
+      type: 'installment',
+      amount: 2500,
+      installmentsCount: 5,
+      startMonth: startMarch,
+      date: '2026-03-05',
+      comments: 'Compra realizada na promoção de aniversário da loja física. Garantia estendida inclusa.',
+    },
+    {
+      id: 'tx-sim-2',
+      title: 'Supermercado Mensal',
+      categoryId: 'cat-food',
+      type: 'single',
+      amount: 620.50,
+      startMonth: startMay,
+      date: '2026-05-10',
+      comments: 'Compras básicas para o mês no hipermercado.',
+    },
+    {
+      id: 'tx-sim-3',
+      title: 'Curso de Especialização Técnica',
+      categoryId: 'cat-others',
+      type: 'installment',
+      amount: 1200,
+      installmentsCount: 12,
+      startMonth: startJan,
+      date: '2026-01-15',
+      comments: 'Curso online de automação para acelerar carreira laboral.',
+    },
+    {
+      id: 'tx-sim-4',
+      title: 'Fatura Boleto Internet Fibra',
+      categoryId: 'cat-housing',
+      type: 'single',
+      amount: 119.90,
+      startMonth: startMay,
+      date: '2026-05-20',
+      comments: 'Vence todo dia 20 de cada mês.',
+    }
+  ];
+
+  return {
+    categories: initialCategories,
+    transactions: initialTransactions,
+    salaries: {
+      '2026-05': 5500,
+    },
+    defaultSalary: 5000,
+    paidTransactions: {
+      'tx-sim-4_2026-05': true,
+    },
+  };
+}
+
 export function useFinance() {
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [syncKey, setSyncKey] = useState<string | null>(() => {
+    return localStorage.getItem('finance_sync_key');
+  });
+  const [syncError, setSyncError] = useState<string | null>(null);
+
   // Core internal state
   const [data, setData] = useState<FinanceData>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -12,7 +138,6 @@ export function useFinance() {
       try {
         const parsed = JSON.parse(saved);
         if (parsed.categories && parsed.transactions) {
-          // Initialize paidTransactions if missing
           if (!parsed.paidTransactions) {
             parsed.paidTransactions = {};
           }
@@ -22,80 +147,175 @@ export function useFinance() {
         console.error('Erro ao ler do localStorage:', e);
       }
     }
-
-    // Default simulation data
-    const initialCategories = getDefaultCategories();
-    
-    // YYYY-MM format
-    const startMarch = '2026-03';
-    const startJan = '2026-01';
-    const startMay = '2026-05';
-
-    const initialTransactions: Transaction[] = [
-      {
-        id: 'tx-sim-1',
-        title: 'Geladeira Inox (5 parcelas)',
-        categoryId: 'cat-housing',
-        type: 'installment',
-        amount: 2500, // R$ 2.500 total, 500 per month
-        installmentsCount: 5,
-        startMonth: startMarch, // Mar (1/5), Apr (2/5), May (3/5), Jun (4/5), Jul (5/5)
-        date: '2026-03-05',
-        comments: 'Compra realizada na promoção de aniversário da loja física. Garantia estendida inclusa.',
-      },
-      {
-        id: 'tx-sim-2',
-        title: 'Supermercado Mensal',
-        categoryId: 'cat-food',
-        type: 'single',
-        amount: 620.50,
-        startMonth: startMay,
-        date: '2026-05-10',
-        comments: 'Compras básicas para o mês no hipermercado.',
-      },
-      {
-        id: 'tx-sim-3',
-        title: 'Curso de Especialização Técnica',
-        categoryId: 'cat-others',
-        type: 'installment',
-        amount: 1200, // R$ 1.200 total, 100 per month
-        installmentsCount: 12,
-        startMonth: startJan, // Jan (1/12), Feb (2/12), Mar (3/12), Apr (4/12), May (5/12)...
-        date: '2026-01-15',
-        comments: 'Curso online de automação para acelerar carreira laboral.',
-      },
-      {
-        id: 'tx-sim-4',
-        title: 'Fatura Boleto Internet Fibra',
-        categoryId: 'cat-housing',
-        type: 'single',
-        amount: 119.90,
-        startMonth: startMay,
-        date: '2026-05-20',
-        comments: 'Vence todo dia 20 de cada mês.',
-      }
-    ];
-
-    return {
-      categories: initialCategories,
-      transactions: initialTransactions,
-      salaries: {
-        '2026-05': 5500,
-      },
-      defaultSalary: 5000,
-      paidTransactions: {
-        'tx-sim-4_2026-05': true, // default one example as paid
-      },
-    };
+    return getInitialSimulationData();
   });
 
-  // Sync state to local storage on any state change
+  // Silent Sync Key Auto Auth Effect
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }, [data]);
+    if (syncKey) {
+      setLoading(true);
+      setSyncError(null);
+      const email = `sync_${syncKey.toLowerCase()}@app-sync.com`;
+      const password = `pass_${syncKey.toLowerCase()}_secure`;
+
+      signInWithEmailAndPassword(auth, email, password)
+        .catch(async (error) => {
+          if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
+            try {
+              await createUserWithEmailAndPassword(auth, email, password);
+            } catch (createErr: any) {
+              console.error('Auto create sync user failed:', createErr);
+              setSyncError('Erro de conexão com o banco na nuvem. Verifique sua chave.');
+              setLoading(false);
+            }
+          } else {
+            console.error('Auto sign-in error:', error);
+            setSyncError('Erro ao carregar dados remotos.');
+            setLoading(false);
+          }
+        });
+    } else {
+      setSyncError(null);
+      if (auth.currentUser && auth.currentUser.email && auth.currentUser.email.startsWith('sync_')) {
+        signOut(auth).catch((err) => console.error('Sign out error:', err));
+      }
+    }
+  }, [syncKey]);
+
+  // Sync state reference to local storage on any state change when running locally
+  useEffect(() => {
+    if (!currentUser) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+  }, [data, currentUser]);
+
+  // Firestore Sync Effect
+  useEffect(() => {
+    let unsubscribeUser = () => {};
+    let unsubscribeCategories = () => {};
+    let unsubscribeTransactions = () => {};
+
+    const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+      setCurrentUser(firebaseUser);
+      
+      if (firebaseUser) {
+        setLoading(true);
+        const userId = firebaseUser.uid;
+
+        // 1. Ensure User configuration document exists
+        const userDocRef = doc(db, 'users', userId);
+        const userDocPath = `users/${userId}`;
+        
+        try {
+          const userSnap = await getDoc(userDocRef);
+          if (!userSnap.exists()) {
+            await setDoc(userDocRef, {
+              uid: userId,
+              defaultSalary: data.defaultSalary || 5000,
+              salaries: data.salaries || { '2026-05': 5500 },
+              paidTransactions: data.paidTransactions || {},
+            });
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.GET, userDocPath);
+        }
+
+        // 2. Real-time User preferences synchronization
+        unsubscribeUser = onSnapshot(userDocRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const docData = docSnap.data();
+            setData((prev) => ({
+              ...prev,
+              defaultSalary: docData.defaultSalary ?? 5000,
+              salaries: docData.salaries ?? {},
+              paidTransactions: docData.paidTransactions ?? {},
+            }));
+          }
+        }, (err) => {
+          handleFirestoreError(err, OperationType.GET, userDocPath);
+        });
+
+        // 3. Real-time categories synchronization
+        const catsColRef = collection(db, 'users', userId, 'categories');
+        const catsPath = `users/${userId}/categories`;
+        
+        unsubscribeCategories = onSnapshot(catsColRef, async (querySnap) => {
+          const fetchedCats: Category[] = [];
+          querySnap.forEach((doc) => {
+            fetchedCats.push(doc.data() as Category);
+          });
+
+          // Seeding initial categories into Cloud database if they do not exist
+          if (fetchedCats.length === 0) {
+            try {
+              const defaultCats = getDefaultCategories();
+              const batch = writeBatch(db);
+              defaultCats.forEach((cat) => {
+                const docRef = doc(catsColRef, cat.id);
+                batch.set(docRef, { ...cat, userId });
+              });
+              await batch.commit();
+            } catch (err) {
+              handleFirestoreError(err, OperationType.WRITE, catsPath);
+            }
+          } else {
+            setData((prev) => ({
+              ...prev,
+              categories: fetchedCats,
+            }));
+          }
+        }, (err) => {
+          handleFirestoreError(err, OperationType.LIST, catsPath);
+        });
+
+        // 4. Real-time transactions synchronization
+        const txsColRef = collection(db, 'users', userId, 'transactions');
+        const txsPath = `users/${userId}/transactions`;
+        
+        unsubscribeTransactions = onSnapshot(txsColRef, (querySnap) => {
+          const fetchedTxs: Transaction[] = [];
+          querySnap.forEach((doc) => {
+            fetchedTxs.push(doc.data() as Transaction);
+          });
+          setData((prev) => ({
+            ...prev,
+            transactions: fetchedTxs,
+          }));
+          setLoading(false);
+        }, (err) => {
+          handleFirestoreError(err, OperationType.LIST, txsPath);
+        });
+
+      } else {
+        // Logged-out state handler
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (parsed.categories && parsed.transactions) {
+              setData(parsed);
+              setLoading(false);
+              return;
+            }
+          } catch (e) {
+            console.error('Erro ao ler do localStorage:', e);
+          }
+        }
+        setData(getInitialSimulationData());
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      unsubAuth();
+      unsubscribeUser();
+      unsubscribeCategories();
+      unsubscribeTransactions();
+    };
+  }, []);
 
   // CATEGORIES CRUD
-  const addCategory = (category: Omit<Category, 'id'>) => {
+  const addCategory = async (category: Omit<Category, 'id'>) => {
     const newCatCount = data.categories.length + 1;
     const newCatId = `cat-custom-${Date.now()}-${newCatCount}`;
     const newCat: Category = {
@@ -103,105 +323,224 @@ export function useFinance() {
       id: newCatId,
     };
 
-    setData((prev) => ({
-      ...prev,
-      categories: [...prev.categories, newCat],
-    }));
-  };
-
-  const updateCategory = (id: string, updated: Omit<Category, 'id'>) => {
-    setData((prev) => ({
-      ...prev,
-      categories: prev.categories.map((c) => (c.id === id ? { ...c, ...updated } : c)),
-    }));
-  };
-
-  const deleteCategory = (id: string) => {
-    setData((prev) => {
-      const updatedTransactions = prev.transactions.map((tx) => {
-        if (tx.categoryId === id) {
-          return { ...tx, categoryId: 'cat-others' };
-        }
-        return tx;
-      });
-      return {
+    if (currentUser) {
+      const path = `users/${currentUser.uid}/categories/${newCatId}`;
+      try {
+        await setDoc(doc(db, 'users', currentUser.uid, 'categories', newCatId), {
+          ...newCat,
+          userId: currentUser.uid,
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, path);
+      }
+    } else {
+      setData((prev) => ({
         ...prev,
-        categories: prev.categories.filter((c) => c.id !== id),
-        transactions: updatedTransactions,
-      };
-    });
+        categories: [...prev.categories, newCat],
+      }));
+    }
+  };
+
+  const updateCategory = async (id: string, updated: Omit<Category, 'id'>) => {
+    if (currentUser) {
+      const path = `users/${currentUser.uid}/categories/${id}`;
+      try {
+        await setDoc(doc(db, 'users', currentUser.uid, 'categories', id), {
+          ...updated,
+          id,
+          userId: currentUser.uid,
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, path);
+      }
+    } else {
+      setData((prev) => ({
+        ...prev,
+        categories: prev.categories.map((c) => (c.id === id ? { ...c, ...updated } : c)),
+      }));
+    }
+  };
+
+  const deleteCategory = async (id: string) => {
+    if (currentUser) {
+      const path = `users/${currentUser.uid}/categories/${id}`;
+      try {
+        await deleteDoc(doc(db, 'users', currentUser.uid, 'categories', id));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
+    } else {
+      setData((prev) => {
+        const updatedTransactions = prev.transactions.map((tx) => {
+          if (tx.categoryId === id) {
+            return { ...tx, categoryId: 'cat-others' };
+          }
+          return tx;
+        });
+        return {
+          ...prev,
+          categories: prev.categories.filter((c) => c.id !== id),
+          transactions: updatedTransactions,
+        };
+      });
+    }
   };
 
   // TRANSACTIONS CRUD
-  const addTransaction = (tx: Omit<Transaction, 'id'>) => {
+  const addTransaction = async (tx: Omit<Transaction, 'id'>) => {
     const newTxId = `tx-${Date.now()}`;
     const newTx: Transaction = {
       ...tx,
       id: newTxId,
     };
 
-    setData((prev) => ({
-      ...prev,
-      transactions: [newTx, ...prev.transactions],
-    }));
-  };
-
-  const updateTransaction = (id: string, updated: Omit<Transaction, 'id'>) => {
-    setData((prev) => ({
-      ...prev,
-      transactions: prev.transactions.map((t) => (t.id === id ? { ...t, ...updated } : t)),
-    }));
-  };
-
-  const deleteTransaction = (id: string) => {
-    setData((prev) => {
-      // Also clean up any paid records for this transaction across all months
-      const cleanedPaid = { ...prev.paidTransactions };
-      Object.keys(cleanedPaid).forEach((key) => {
-        if (key.startsWith(`${id}_`)) {
-          delete cleanedPaid[key];
-        }
-      });
-
-      return {
+    if (currentUser) {
+      const path = `users/${currentUser.uid}/transactions/${newTxId}`;
+      try {
+        await setDoc(doc(db, 'users', currentUser.uid, 'transactions', newTxId), {
+          ...newTx,
+          userId: currentUser.uid,
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, path);
+      }
+    } else {
+      setData((prev) => ({
         ...prev,
-        transactions: prev.transactions.filter((t) => t.id !== id),
-        paidTransactions: cleanedPaid,
-      };
-    });
+        transactions: [newTx, ...prev.transactions],
+      }));
+    }
+  };
+
+  const updateTransaction = async (id: string, updated: Omit<Transaction, 'id'>) => {
+    if (currentUser) {
+      const path = `users/${currentUser.uid}/transactions/${id}`;
+      try {
+        await setDoc(doc(db, 'users', currentUser.uid, 'transactions', id), {
+          ...updated,
+          id,
+          userId: currentUser.uid,
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, path);
+      }
+    } else {
+      setData((prev) => ({
+        ...prev,
+        transactions: prev.transactions.map((t) => (t.id === id ? { ...t, ...updated } : t)),
+      }));
+    }
+  };
+
+  const deleteTransaction = async (id: string) => {
+    if (currentUser) {
+      const path = `users/${currentUser.uid}/transactions/${id}`;
+      try {
+        await deleteDoc(doc(db, 'users', currentUser.uid, 'transactions', id));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
+    } else {
+      setData((prev) => {
+        const cleanedPaid = { ...prev.paidTransactions };
+        Object.keys(cleanedPaid).forEach((key) => {
+          if (key.startsWith(`${id}_`)) {
+            delete cleanedPaid[key];
+          }
+        });
+
+        return {
+          ...prev,
+          transactions: prev.transactions.filter((t) => t.id !== id),
+          paidTransactions: cleanedPaid,
+        };
+      });
+    }
   };
 
   // PAID STATE TRIGGERS
-  const togglePaidTransaction = (transactionId: string, month: string) => {
+  const togglePaidTransaction = async (transactionId: string, month: string) => {
     const key = `${transactionId}_${month}`;
-    setData((prev) => {
-      const currentPaid = prev.paidTransactions || {};
-      return {
-        ...prev,
-        paidTransactions: {
-          ...currentPaid,
-          [key]: !currentPaid[key],
-        },
-      };
-    });
+    const updatedPaid = {
+      ...(data.paidTransactions || {}),
+      [key]: !(data.paidTransactions || {})[key],
+    };
+
+    if (currentUser) {
+      const path = `users/${currentUser.uid}`;
+      try {
+        await setDoc(doc(db, 'users', currentUser.uid), {
+          uid: currentUser.uid,
+          defaultSalary: data.defaultSalary,
+          salaries: data.salaries,
+          paidTransactions: updatedPaid,
+        }, { merge: true });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, path);
+      }
+    } else {
+      setData((prev) => {
+        const currentPaid = prev.paidTransactions || {};
+        return {
+          ...prev,
+          paidTransactions: {
+            ...currentPaid,
+            [key]: !currentPaid[key],
+          },
+        };
+      });
+    }
   };
 
   // SALARIES OPERATIONS
-  const setSalaryForMonth = (month: string, salary: number) => {
-    setData((prev) => ({
-      ...prev,
-      salaries: {
-        ...prev.salaries,
-        [month]: salary,
-      },
-    }));
+  const setSalaryForMonth = async (month: string, salary: number) => {
+    const updatedSalaries = {
+      ...(data.salaries || {}),
+      [month]: salary,
+    };
+
+    if (currentUser) {
+      const path = `users/${currentUser.uid}`;
+      try {
+        await setDoc(doc(db, 'users', currentUser.uid), {
+          uid: currentUser.uid,
+          defaultSalary: data.defaultSalary,
+          salaries: updatedSalaries,
+          paidTransactions: data.paidTransactions || {},
+        }, { merge: true });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, path);
+      }
+    } else {
+      setData((prev) => ({
+        ...prev,
+        salaries: {
+          ...prev.salaries,
+          [month]: salary,
+        },
+      }));
+    }
   };
 
-  const updateDefaultSalary = (salary: number) => {
-    setData((prev) => ({
-      ...prev,
-      defaultSalary: salary,
-    }));
+  const updateDefaultSalary = async (salary: number) => {
+    if (currentUser) {
+      const path = `users/${currentUser.uid}`;
+      try {
+        await setDoc(doc(db, 'users', currentUser.uid), {
+          uid: currentUser.uid,
+          defaultSalary: salary,
+          salaries: data.salaries,
+          paidTransactions: data.paidTransactions || {},
+        }, { merge: true });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, path);
+      }
+    } else {
+      setData((prev) => ({
+        ...prev,
+        defaultSalary: salary,
+      }));
+    }
   };
 
   const updateCategoriesOrder = (reorderedCats: Category[]) => {
@@ -211,10 +550,105 @@ export function useFinance() {
     }));
   };
 
-  // Restores simulation data
+  const connectSyncKey = async (key: string) => {
+    if (!key || !key.trim()) return;
+    const formattedKey = key.trim().toUpperCase();
+    setLoading(true);
+    setSyncError(null);
+
+    const email = `sync_${formattedKey.toLowerCase()}@app-sync.com`;
+    const password = `pass_${formattedKey.toLowerCase()}_secure`;
+
+    try {
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+      } catch (err: any) {
+        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+          await createUserWithEmailAndPassword(auth, email, password);
+        } else {
+          throw err;
+        }
+      }
+      localStorage.setItem('finance_sync_key', formattedKey);
+      setSyncKey(formattedKey);
+    } catch (err: any) {
+      console.error('Error connecting sync key:', err);
+      setSyncError('Chave inválida ou erro de conexão. Tente novamente.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateNewSyncKey = async () => {
+    setLoading(true);
+    setSyncError(null);
+    
+    const rand = Math.floor(100000 + Math.random() * 900000); 
+    const newKey = `S-${rand}`;
+    const email = `sync_${newKey.toLowerCase()}@app-sync.com`;
+    const password = `pass_${newKey.toLowerCase()}_secure`;
+
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userId = userCredential.user.uid;
+
+      await setDoc(doc(db, 'users', userId), {
+        uid: userId,
+        defaultSalary: data.defaultSalary || 5000,
+        salaries: data.salaries || {},
+        paidTransactions: data.paidTransactions || {},
+      });
+
+      const catsCol = collection(db, 'users', userId, 'categories');
+      const catsBatch = writeBatch(db);
+      data.categories.forEach((cat) => {
+        catsBatch.set(doc(catsCol, cat.id), { ...cat, userId });
+      });
+      await catsBatch.commit();
+
+      const txsCol = collection(db, 'users', userId, 'transactions');
+      const txsBatch = writeBatch(db);
+      data.transactions.forEach((tx) => {
+        txsBatch.set(doc(txsCol, tx.id), { ...tx, userId });
+      });
+      await txsBatch.commit();
+
+      localStorage.setItem('finance_sync_key', newKey);
+      setSyncKey(newKey);
+    } catch (err: any) {
+      console.error('Error generating sync key:', err);
+      setSyncError('Não foi possível gerar uma nova chave na nuvem.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const disconnectSyncKey = async () => {
+    setLoading(true);
+    setSyncError(null);
+    try {
+      localStorage.removeItem('finance_sync_key');
+      setSyncKey(null);
+      await signOut(auth);
+      
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        setData(JSON.parse(saved));
+      } else {
+        setData(getInitialSimulationData());
+      }
+    } catch (err: any) {
+      console.error('Error disconnecting sync key:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const resetToSimulationData = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    window.location.reload();
+    if (!currentUser) {
+      localStorage.removeItem(STORAGE_KEY);
+      window.location.reload();
+    }
   };
 
   return {
@@ -223,6 +657,13 @@ export function useFinance() {
     salaries: data.salaries,
     defaultSalary: data.defaultSalary,
     paidTransactions: data.paidTransactions || {},
+    currentUser,
+    loading,
+    syncKey,
+    syncError,
+    connectSyncKey,
+    generateNewSyncKey,
+    disconnectSyncKey,
     togglePaidTransaction,
     addCategory,
     updateCategory,

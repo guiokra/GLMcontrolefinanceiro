@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Controle Financeiro",
+  "description": "Aplicativo moderno e elegante de controle de finanças com suporte inteligente a compras parceladas, categorias de gastos e saldo mensal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -127,7 +127,9 @@ export function useFinance() {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [syncKey, setSyncKey] = useState<string | null>(() => {
-    return localStorage.getItem('finance_sync_key');
+    const val = localStorage.getItem('finance_sync_key');
+    if (val === 'LOCAL') return null;
+    return val || 'S-GERAL';
   });
   const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -215,6 +217,26 @@ export function useFinance() {
               salaries: data.salaries || { '2026-05': 5500 },
               paidTransactions: data.paidTransactions || {},
             });
+
+            // Seed Categories in cloud
+            const catsColRef = collection(db, 'users', userId, 'categories');
+            const catsBatch = writeBatch(db);
+            const currentCats = data.categories.length > 0 ? data.categories : getDefaultCategories();
+            currentCats.forEach((cat) => {
+              const docRef = doc(catsColRef, cat.id);
+              catsBatch.set(docRef, { ...cat, userId });
+            });
+            await catsBatch.commit();
+
+            // Seed Transactions in cloud
+            const txsColRef = collection(db, 'users', userId, 'transactions');
+            const txsBatch = writeBatch(db);
+            const currentTxs = data.transactions;
+            currentTxs.forEach((tx) => {
+              const docRef = doc(txsColRef, tx.id);
+              txsBatch.set(docRef, { ...tx, userId });
+            });
+            await txsBatch.commit();
           }
         } catch (err) {
           handleFirestoreError(err, OperationType.GET, userDocPath);
@@ -627,7 +649,7 @@ export function useFinance() {
     setLoading(true);
     setSyncError(null);
     try {
-      localStorage.removeItem('finance_sync_key');
+      localStorage.setItem('finance_sync_key', 'LOCAL');
       setSyncKey(null);
       await signOut(auth);
       

@@ -29,4 +29,5 @@ export interface FinanceData {
   transactions: Transaction[];
   salaries: Record<string, number>; // Record YYYY-MM -> salary
   defaultSalary: number;            // fallback salary when no specific month is set
+  paidTransactions?: Record<string, boolean>; // Keyed by: `${transactionId}_${month}`
 }

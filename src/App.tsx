@@ -23,7 +23,6 @@ import { SalaryModal } from './components/SalaryModal';
 import { CategoryFormModal } from './components/CategoryFormModal';
 import { TransactionModal } from './components/TransactionModal';
 import { CategoryBreakdown } from './components/CategoryBreakdown';
-import { TransactionList } from './components/TransactionList';
 
 import { Category, Transaction } from './types';
 
@@ -33,6 +32,8 @@ export default function App() {
     transactions,
     salaries,
     defaultSalary,
+    paidTransactions,
+    togglePaidTransaction,
     addCategory,
     updateCategory,
     deleteCategory,
@@ -41,6 +42,7 @@ export default function App() {
     deleteTransaction,
     setSalaryForMonth,
     updateDefaultSalary,
+    updateCategoriesOrder,
     resetToSimulationData,
   } = useFinance();
 
@@ -51,6 +53,9 @@ export default function App() {
   const [isSalaryModalOpen, setIsSalaryModalOpen] = useState<boolean>(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState<boolean>(false);
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState<boolean>(false);
+
+  // Selected default category when launching a transaction for a specific category card
+  const [selectedDefaultCategoryId, setSelectedDefaultCategoryId] = useState<string | undefined>(undefined);
 
   // Editing state
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
@@ -109,8 +114,9 @@ export default function App() {
     setIsCategoryModalOpen(true);
   };
 
-  const triggerAddTransaction = () => {
+  const triggerAddTransaction = (defaultCatId?: any) => {
     setEditingTransaction(null);
+    setSelectedDefaultCategoryId(typeof defaultCatId === 'string' ? defaultCatId : undefined);
     setIsTransactionModalOpen(true);
   };
 
@@ -136,34 +142,34 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0b0f19] text-slate-100" id="finance-app-root">
+    <div className="min-h-screen flex flex-col bg-[#070a13] text-slate-100" id="finance-app-root">
       {/* Top Header Navbar */}
-      <header className="sticky top-0 z-40 bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 px-4 py-4" id="app-header">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+      <header className="sticky top-0 z-40 bg-[#0c101b]/90 backdrop-blur-md border-b border-slate-800/60 px-4 py-4" id="app-header">
+        <div className="max-w-7xl mx-auto flex items-center justify-between text-slate-100">
           <div className="flex items-center gap-3">
-            <span className="w-10 h-10 rounded-2xl bg-indigo-600 flex items-center justify-center text-white shadow-xl shadow-indigo-600/30">
-              <Wallet size={22} />
+            <span className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-505 to-violet-500 flex items-center justify-center text-white shadow-lg shadow-indigo-600/20">
+              <Wallet size={20} className="stroke-[2px]" />
             </span>
             <div>
-              <h1 className="text-lg font-extrabold tracking-tight text-white flex items-center gap-1.5 leading-none">
+              <h1 className="text-lg font-black tracking-tight text-white flex items-center gap-1.5 leading-none">
                 Finanças Pessoais
               </h1>
-              <p className="text-[10px] uppercase tracking-wider text-indigo-400/80 font-bold mt-1">
+              <p className="text-[10px] uppercase tracking-wider text-indigo-400 font-extrabold mt-1">
                 Controle Inteligente
               </p>
             </div>
           </div>
 
-          {/* Quick Demo Reset Indicator */}
           <div className="flex items-center gap-2">
+            {/* Quick Demo Reset Indicator */}
             <button
               onClick={resetToSimulationData}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-950/40 hover:bg-slate-950/80 hover:border-slate-700 text-slate-400 hover:text-indigo-400 text-xs font-bold transition-all"
+              className="flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-850 bg-slate-950/20 hover:bg-slate-950/60 hover:border-slate-805 text-slate-400 hover:text-indigo-400 text-xs font-black transition-all cursor-pointer"
               title="Recarrega as contas com os dados simulados originais"
               id="reset-demo-data"
             >
-              <RefreshCw size={12} />
-              <span className="hidden sm:inline">Resetar Simulador</span>
+              <RefreshCw size={11} className="stroke-[2.5px]" />
+              <span className="hidden sm:inline text-xs">Resetar</span>
             </button>
           </div>
         </div>
@@ -174,25 +180,25 @@ export default function App() {
         
         {/* Navigation Calendar Month Banner */}
         <div 
-          className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-900 border border-slate-800 p-4 rounded-3xl shadow-lg"
+          className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#121826] border border-slate-800/60 p-5 rounded-3xl shadow-xl shadow-slate-950/10"
           id="calendar-navigation-banner"
         >
           {/* Quick Info text */}
           <div className="text-center sm:text-left select-none">
-            <h3 className="text-[11px] font-bold uppercase tracking-widest text-indigo-400">Navegação Temporal</h3>
-            <p className="text-xs text-slate-500 mt-0.5">As parcelas sincronizam automaticamente com os meses futuros</p>
+            <h3 className="text-[11px] font-black uppercase tracking-widest text-indigo-400">Navegação Temporal</h3>
+            <p className="text-xs text-slate-450 font-medium mt-0.5">As parcelas sincronizam automaticamente com os meses futuros</p>
           </div>
 
           {/* Month Slider Mechanics */}
           <div className="flex items-center gap-2">
             <button 
               onClick={handlePrevMonth}
-              className="p-2.5 rounded-xl border border-slate-800 bg-slate-950/60 hover:bg-slate-950/90 text-slate-400 hover:text-slate-100 transition-colors active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+              className="p-2.5 rounded-xl border border-slate-800 bg-slate-950/40 hover:bg-slate-950/80 text-slate-400 hover:text-slate-100 transition-all active:scale-95 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
               title="Mês Anterior"
               disabled={activeMonth === monthOptions[0]?.value}
               id="btn-prev-month"
             >
-              <ChevronLeft size={18} />
+              <ChevronLeft size={16} />
             </button>
 
             {/* Selector Dropdown custom-styled wrapper */}
@@ -200,11 +206,11 @@ export default function App() {
               <select
                 value={activeMonth}
                 onChange={(e) => setActiveMonth(e.target.value)}
-                className="bg-slate-955 border border-slate-800 text-sm font-extrabold text-slate-100 py-2.5 px-4 rounded-xl cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-600 appearance-none pr-9 select-none"
+                className="bg-[#0c101b] border border-slate-800 text-sm font-black text-slate-100 py-2.5 px-4 rounded-xl cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-600 appearance-none pr-9 select-none transition-colors"
                 id="month-active-selector"
               >
                 {monthOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value} className="bg-slate-900 text-slate-200 font-semibold">
+                  <option key={opt.value} value={opt.value} className="bg-[#0c101b] text-slate-200 font-extrabold">
                     {opt.label}
                   </option>
                 ))}
@@ -216,22 +222,22 @@ export default function App() {
 
             <button 
               onClick={handleNextMonth}
-              className="p-2.5 rounded-xl border border-slate-800 bg-slate-950/60 hover:bg-slate-950/90 text-slate-400 hover:text-slate-100 transition-colors active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+              className="p-2.5 rounded-xl border border-slate-800 bg-slate-950/40 hover:bg-slate-950/80 text-slate-400 hover:text-slate-100 transition-all active:scale-95 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
               title="Mês Seguinte"
               disabled={activeMonth === monthOptions[monthOptions.length - 1]?.value}
               id="btn-next-month"
             >
-              <ChevronRight size={18} />
+              <ChevronRight size={16} />
             </button>
           </div>
 
           {/* Action to create a new expense item */}
           <button
             onClick={triggerAddTransaction}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/10 active:scale-95 transition-all"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-550 hover:from-indigo-500 hover:to-indigo-500 text-white font-black text-sm shadow-xl shadow-indigo-600/10 active:scale-95 transition-all cursor-pointer"
             id="btn-trigger-add-expense"
           >
-            <Plus size={16} />
+            <Plus size={15} className="stroke-[3px]" />
             Lançar Gasto
           </button>
         </div>
@@ -243,29 +249,21 @@ export default function App() {
           onEditSalary={() => setIsSalaryModalOpen(true)}
         />
 
-        {/* Divided ledger sections for android & windows layouts */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Active Month transactions list ledger (2/3 width on desktop) */}
-          <div className="lg:col-span-2">
-            <TransactionList 
-              categories={categories}
-              transactions={transactions}
-              activeMonth={activeMonth}
-              onEditTransaction={triggerEditTransaction}
-              onDeleteTransaction={deleteTransaction}
-              onMoveTransaction={handleMoveTransactionCategory}
-            />
-          </div>
-
-          {/* Categories division and analytics (1/3 width on desktop) */}
-          <div className="lg:col-span-1">
-            <CategoryBreakdown 
-              categories={categories}
-              activeTransactionsWithAmount={activeTransactionsWithAmount}
-              onAddCategory={triggerAddCategory}
-              onEditCategory={triggerEditCategory}
-            />
-          </div>
+        {/* Beautiful layout centering the category deck cards with nested lists */}
+        <div className="max-w-3xl mx-auto">
+          <CategoryBreakdown 
+            categories={categories}
+            transactions={transactions}
+            activeMonth={activeMonth}
+            paidTransactions={paidTransactions}
+            onTogglePaid={togglePaidTransaction}
+            onAddCategory={triggerAddCategory}
+            onEditCategory={triggerEditCategory}
+            onReorderCategories={updateCategoriesOrder}
+            onAddTransaction={triggerAddTransaction}
+            onEditTransaction={triggerEditTransaction}
+            onDeleteTransaction={deleteTransaction}
+          />
         </div>
 
       </main>
@@ -310,6 +308,7 @@ export default function App() {
         onSave={addTransaction}
         onUpdate={updateTransaction}
         editingTransaction={editingTransaction}
+        defaultCategoryId={selectedDefaultCategoryId}
       />
     </div>
   );

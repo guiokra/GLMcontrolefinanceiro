@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with global financial settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "defaultSalary": { "type": "number" },
+        "salaries": {
+          "type": "object",
+          "description": "Salary mappings for specific months, e.g., 'YYYY-MM' to rate"
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "defaultSalary"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Financial expense/income category",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "color": { "type": "string" },
+        "icon": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "name", "color", "icon", "userId"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A single or installment transaction expense",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "type": { "type": "string", "enum": ["single", "installment"] },
+        "amount": { "type": "number" },
+        "installmentsCount": { "type": "number" },
+        "startMonth": { "type": "string" },
+        "date": { "type": "string" },
+        "comments": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "title", "categoryId", "type", "amount", "startMonth", "date", "userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores user configuration, monthly salaries, and preferences."
+    },
+    "/users/{userId}/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Custom transaction categories defined by the user."
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Monthly single or recurring installment transactions."
+    }
+  }
+}

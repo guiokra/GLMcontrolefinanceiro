@@ -11,6 +11,7 @@ interface TransactionModalProps {
   onSave: (tx: Omit<Transaction, 'id'>) => void;
   onUpdate: (id: string, tx: Omit<Transaction, 'id'>) => void;
   editingTransaction?: Transaction | null;
+  defaultCategoryId?: string;
 }
 
 export function TransactionModal({
@@ -21,6 +22,7 @@ export function TransactionModal({
   onSave,
   onUpdate,
   editingTransaction,
+  defaultCategoryId,
 }: TransactionModalProps) {
   const [title, setTitle] = useState<string>('');
   const [categoryId, setCategoryId] = useState<string>('');
@@ -52,7 +54,7 @@ export function TransactionModal({
         const fullDate = `${year}-${monthStr}-${dayStr}`;
 
         setTitle('');
-        setCategoryId(categories[0]?.id || 'cat-others');
+        setCategoryId(defaultCategoryId || categories[0]?.id || 'cat-others');
         setAmountInput('');
         setType('single');
         setInstallmentsCount(3);
@@ -61,16 +63,18 @@ export function TransactionModal({
         setComments('');
       }
     }
-  }, [isOpen, editingTransaction, categories, activeMonth]);
+  }, [isOpen, editingTransaction, categories, activeMonth, defaultCategoryId]);
 
-  // Sync Start Month to Transaction Date when date changes
-  const handleDateChange = (newDateStr: string) => {
-    setDate(newDateStr);
-    if (!editingTransaction && newDateStr) {
-      const [year, month] = newDateStr.split('-');
-      setStartMonth(`${year}-${month}`);
+  // Auto-update date to match the startMonth (since purchase date input is removed)
+  useEffect(() => {
+    if (startMonth && isOpen) {
+      const parts = date.split('-');
+      const currentYearMonth = parts.slice(0, 2).join('-');
+      if (currentYearMonth !== startMonth) {
+        setDate(`${startMonth}-01`);
+      }
     }
-  };
+  }, [startMonth, date, isOpen]);
 
   if (!isOpen) return null;
 
@@ -201,52 +205,35 @@ export function TransactionModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Purchase Date */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-                Data do Gasto
-              </label>
-              <input
-                type="date"
-                required
-                value={date}
-                onChange={(e) => handleDateChange(e.target.value)}
-                className="w-full rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2.5 text-slate-200 focus:outline-none focus:border-indigo-500 font-medium transition-all cursor-pointer"
-                id="transaction-date-input"
-              />
-            </div>
-
-            {/* Recurrence Type Selector */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-                Tipo de Cobrança
-              </label>
-              <div className="grid grid-cols-2 gap-2 bg-slate-950/40 border border-slate-800 p-1 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => setType('single')}
-                  className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                    type === 'single'
-                      ? 'bg-indigo-600 text-white shadow-md'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-950/30'
-                  }`}
-                >
-                  À Vista / Único
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setType('installment')}
-                  className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                    type === 'installment'
-                      ? 'bg-indigo-600 text-white shadow-md'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-950/30'
-                  }`}
-                  id="toggle-installment-btn"
-                >
-                  Parcelado
-                </button>
-              </div>
+          {/* Recurrence Type Selector */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 font-bold">
+              Tipo de Cobrança
+            </label>
+            <div className="grid grid-cols-2 gap-2 bg-slate-950/40 border border-slate-800 p-1.5 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setType('single')}
+                className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                  type === 'single'
+                    ? 'bg-indigo-600 text-white shadow-md font-extrabold'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-950/30 font-semibold'
+                }`}
+              >
+                À Vista / Único
+              </button>
+              <button
+                type="button"
+                onClick={() => setType('installment')}
+                className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                  type === 'installment'
+                    ? 'bg-indigo-600 text-white shadow-md font-extrabold'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-950/30 font-semibold'
+                }`}
+                id="toggle-installment-btn"
+              >
+                Parcelado
+              </button>
             </div>
           </div>
 

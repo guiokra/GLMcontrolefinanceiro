@@ -1,14 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Category, Transaction, FinanceData } from '../types';
 import { getDefaultCategories } from '../utils';
-import { db, auth } from '../lib/firebase';
-import { 
-  onAuthStateChanged, 
-  User as FirebaseUser, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut 
-} from 'firebase/auth';
+import { db } from '../lib/firebase';
 import { 
   doc, 
   collection, 
@@ -36,21 +29,13 @@ interface FirestoreErrorInfo {
   path: string | null;
   authInfo: {
     userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
   }
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-    },
+    authInfo: {},
     operationType,
     path
   };
@@ -124,14 +109,15 @@ function getInitialSimulationData(): FinanceData {
 }
 
 export function useFinance() {
-  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
   const [syncKey, setSyncKey] = useState<string | null>(() => {
     const val = localStorage.getItem('finance_sync_key');
     if (val === 'LOCAL') return null;
     return val || 'S-GERAL';
   });
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  const currentUser = syncKey ? { uid: syncKey } as any : null;
 
   // Core internal state
   const [data, setData] = useState<FinanceData>(() => {
@@ -152,44 +138,12 @@ export function useFinance() {
     return getInitialSimulationData();
   });
 
-  // Silent Sync Key Auto Auth Effect
-  useEffect(() => {
-    if (syncKey) {
-      setLoading(true);
-      setSyncError(null);
-      const email = `sync_${syncKey.toLowerCase()}@app-sync.com`;
-      const password = `pass_${syncKey.toLowerCase()}_secure`;
-
-      signInWithEmailAndPassword(auth, email, password)
-        .catch(async (error) => {
-          if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
-            try {
-              await createUserWithEmailAndPassword(auth, email, password);
-            } catch (createErr: any) {
-              console.error('Auto create sync user failed:', createErr);
-              setSyncError('Erro de conexão com o banco na nuvem. Verifique sua chave.');
-              setLoading(false);
-            }
-          } else {
-            console.error('Auto sign-in error:', error);
-            setSyncError('Erro ao carregar dados remotos.');
-            setLoading(false);
-          }
-        });
-    } else {
-      setSyncError(null);
-      if (auth.currentUser && auth.currentUser.email && auth.currentUser.email.startsWith('sync_')) {
-        signOut(auth).catch((err) => console.error('Sign out error:', err));
-      }
-    }
-  }, [syncKey]);
-
   // Sync state reference to local storage on any state change when running locally
   useEffect(() => {
-    if (!currentUser) {
+    if (!syncKey) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     }
-  }, [data, currentUser]);
+  }, [data, syncKey]);
 
   // Firestore Sync Effect
   useEffect(() => {
@@ -197,17 +151,15 @@ export function useFinance() {
     let unsubscribeCategories = () => {};
     let unsubscribeTransactions = () => {};
 
-    const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-      setCurrentUser(firebaseUser);
-      
-      if (firebaseUser) {
-        setLoading(true);
-        const userId = firebaseUser.uid;
+    if (syncKey) {
+      setLoading(true);
+      const userId = syncKey;
 
-        // 1. Ensure User configuration document exists
-        const userDocRef = doc(db, 'users', userId);
-        const userDocPath = `users/${userId}`;
-        
+      // Ensure User configuration document exists
+      const userDocRef = doc(db, 'users', userId);
+      const userDocPath = `users/${userId}`;
+
+      const initUserAndData = async () => {
         try {
           const userSnap = await getDoc(userDocRef);
           if (!userSnap.exists()) {
@@ -239,10 +191,10 @@ export function useFinance() {
             await txsBatch.commit();
           }
         } catch (err) {
-          handleFirestoreError(err, OperationType.GET, userDocPath);
+          console.error('Error seeding data:', err);
         }
 
-        // 2. Real-time User preferences synchronization
+        // Real-time User preferences synchronization
         unsubscribeUser = onSnapshot(userDocRef, (docSnap) => {
           if (docSnap.exists()) {
             const docData = docSnap.data();
@@ -257,17 +209,16 @@ export function useFinance() {
           handleFirestoreError(err, OperationType.GET, userDocPath);
         });
 
-        // 3. Real-time categories synchronization
+        // Real-time categories synchronization
         const catsColRef = collection(db, 'users', userId, 'categories');
         const catsPath = `users/${userId}/categories`;
-        
+
         unsubscribeCategories = onSnapshot(catsColRef, async (querySnap) => {
           const fetchedCats: Category[] = [];
           querySnap.forEach((doc) => {
             fetchedCats.push(doc.data() as Category);
           });
 
-          // Seeding initial categories into Cloud database if they do not exist
           if (fetchedCats.length === 0) {
             try {
               const defaultCats = getDefaultCategories();
@@ -290,10 +241,10 @@ export function useFinance() {
           handleFirestoreError(err, OperationType.LIST, catsPath);
         });
 
-        // 4. Real-time transactions synchronization
+        // Real-time transactions synchronization
         const txsColRef = collection(db, 'users', userId, 'transactions');
         const txsPath = `users/${userId}/transactions`;
-        
+
         unsubscribeTransactions = onSnapshot(txsColRef, (querySnap) => {
           const fetchedTxs: Transaction[] = [];
           querySnap.forEach((doc) => {
@@ -307,34 +258,34 @@ export function useFinance() {
         }, (err) => {
           handleFirestoreError(err, OperationType.LIST, txsPath);
         });
+      };
 
-      } else {
-        // Logged-out state handler
-        const saved = localStorage.getItem(STORAGE_KEY);
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved);
-            if (parsed.categories && parsed.transactions) {
-              setData(parsed);
-              setLoading(false);
-              return;
-            }
-          } catch (e) {
-            console.error('Erro ao ler do localStorage:', e);
+      initUserAndData();
+    } else {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed.categories && parsed.transactions) {
+            setData(parsed);
+            setLoading(false);
+            return;
           }
+        } catch (e) {
+          console.error('Erro ao ler do localStorage:', e);
         }
-        setData(getInitialSimulationData());
-        setLoading(false);
       }
-    });
+      setData(getInitialSimulationData());
+      setLoading(false);
+    }
 
     return () => {
-      unsubAuth();
       unsubscribeUser();
       unsubscribeCategories();
       unsubscribeTransactions();
     };
-  }, []);
+  }, [syncKey]);
+
 
   // CATEGORIES CRUD
   const addCategory = async (category: Omit<Category, 'id'>) => {
@@ -578,18 +529,33 @@ export function useFinance() {
     setLoading(true);
     setSyncError(null);
 
-    const email = `sync_${formattedKey.toLowerCase()}@app-sync.com`;
-    const password = `pass_${formattedKey.toLowerCase()}_secure`;
-
     try {
-      try {
-        await signInWithEmailAndPassword(auth, email, password);
-      } catch (err: any) {
-        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-          await createUserWithEmailAndPassword(auth, email, password);
-        } else {
-          throw err;
-        }
+      const docRef = doc(db, 'users', formattedKey);
+      const docSnap = await getDoc(docRef);
+      if (!docSnap.exists()) {
+        // If the workspace does not exist in the cloud, initialize it with current local data
+        await setDoc(docRef, {
+          uid: formattedKey,
+          defaultSalary: data.defaultSalary || 5000,
+          salaries: data.salaries || {},
+          paidTransactions: data.paidTransactions || {},
+        });
+
+        // Seed Categories in cloud
+        const catsColRef = collection(db, 'users', formattedKey, 'categories');
+        const catsBatch = writeBatch(db);
+        data.categories.forEach((cat) => {
+          catsBatch.set(doc(catsColRef, cat.id), { ...cat, userId: formattedKey });
+        });
+        await catsBatch.commit();
+
+        // Seed Transactions in cloud
+        const txsColRef = collection(db, 'users', formattedKey, 'transactions');
+        const txsBatch = writeBatch(db);
+        data.transactions.forEach((tx) => {
+          txsBatch.set(doc(txsColRef, tx.id), { ...tx, userId: formattedKey });
+        });
+        await txsBatch.commit();
       }
       localStorage.setItem('finance_sync_key', formattedKey);
       setSyncKey(formattedKey);
@@ -607,31 +573,26 @@ export function useFinance() {
     
     const rand = Math.floor(100000 + Math.random() * 900000); 
     const newKey = `S-${rand}`;
-    const email = `sync_${newKey.toLowerCase()}@app-sync.com`;
-    const password = `pass_${newKey.toLowerCase()}_secure`;
 
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const userId = userCredential.user.uid;
-
-      await setDoc(doc(db, 'users', userId), {
-        uid: userId,
+      await setDoc(doc(db, 'users', newKey), {
+        uid: newKey,
         defaultSalary: data.defaultSalary || 5000,
         salaries: data.salaries || {},
         paidTransactions: data.paidTransactions || {},
       });
 
-      const catsCol = collection(db, 'users', userId, 'categories');
+      const catsCol = collection(db, 'users', newKey, 'categories');
       const catsBatch = writeBatch(db);
       data.categories.forEach((cat) => {
-        catsBatch.set(doc(catsCol, cat.id), { ...cat, userId });
+        catsBatch.set(doc(catsCol, cat.id), { ...cat, userId: newKey });
       });
       await catsBatch.commit();
 
-      const txsCol = collection(db, 'users', userId, 'transactions');
+      const txsCol = collection(db, 'users', newKey, 'transactions');
       const txsBatch = writeBatch(db);
       data.transactions.forEach((tx) => {
-        txsBatch.set(doc(txsCol, tx.id), { ...tx, userId });
+        txsBatch.set(doc(txsCol, tx.id), { ...tx, userId: newKey });
       });
       await txsBatch.commit();
 
@@ -651,7 +612,6 @@ export function useFinance() {
     try {
       localStorage.setItem('finance_sync_key', 'LOCAL');
       setSyncKey(null);
-      await signOut(auth);
       
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {

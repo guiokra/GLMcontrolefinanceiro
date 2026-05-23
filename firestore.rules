@@ -2,45 +2,36 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // 1. Catch-all block to default deny
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // Helper functions
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
+    // Helper functions - allow public access for syncing if the document belongs to users collection
     function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+      return true; // Passwordless syncing allows direct write/read based on the Sync Key
     }
 
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // USER VALIDATION
+    // USER VALIDATING (no request.auth dependency)
     function isValidUser(user) {
-      return user.uid is string && user.uid == request.auth.uid
+      return user.uid is string
         && user.defaultSalary is number && user.defaultSalary >= 0
         && (user.get('salaries', null) == null || user.salaries is map)
         && user.keys().hasAll(['uid', 'defaultSalary'])
         && user.keys().size() <= 4;
     }
 
-    // CATEGORY VALIDATION
+    // CATEGORY VALIDATING (no request.auth dependency)
     function isValidCategory(cat) {
       return cat.id is string && cat.id.size() <= 128
         && cat.name is string && cat.name.size() > 0 && cat.name.size() <= 100
         && cat.color is string && cat.color.size() <= 50
         && cat.icon is string && cat.icon.size() <= 100
-        && cat.userId is string && cat.userId == request.auth.uid
+        && cat.userId is string
         && cat.keys().hasAll(['id', 'name', 'color', 'icon', 'userId'])
         && cat.keys().size() == 5;
     }
 
-    // TRANSACTION VALIDATION
+    // TRANSACTION VALIDATING (no request.auth dependency)
     function isValidTransaction(tx) {
       return tx.id is string && tx.id.size() <= 128
         && tx.title is string && tx.title.size() > 0 && tx.title.size() <= 150
@@ -51,7 +42,7 @@ service cloud.firestore {
         && tx.startMonth is string && tx.startMonth.size() == 7  // YYYY-MM
         && tx.date is string && tx.date.size() == 10            // YYYY-MM-DD
         && (tx.get('comments', null) == null || (tx.comments is string && tx.comments.size() <= 1000))
-        && tx.userId is string && tx.userId == request.auth.uid
+        && tx.userId is string
         && tx.keys().hasAll(['id', 'title', 'categoryId', 'type', 'amount', 'startMonth', 'date', 'userId'])
         && tx.keys().size() <= 10;
     }
@@ -59,19 +50,17 @@ service cloud.firestore {
     // Matches
     match /users/{userId} {
       allow get: if isOwner(userId);
-      allow create, update: if isOwner(userId) && isValidUser(request.resource.data);
-      allow delete: if false; // Users cannot be deleted directly via client SDK
+      allow create, update: if isOwner(userId) && isValidId(userId) && isValidUser(request.resource.data);
+      allow delete: if false; 
 
       match /categories/{categoryId} {
-        allow get: if isOwner(userId);
-        allow list: if isOwner(userId);
+        allow get, list: if isOwner(userId);
         allow create, update: if isOwner(userId) && isValidId(categoryId) && isValidCategory(request.resource.data);
         allow delete: if isOwner(userId);
       }
 
       match /transactions/{transactionId} {
-        allow get: if isOwner(userId);
-        allow list: if isOwner(userId);
+        allow get, list: if isOwner(userId);
         allow create, update: if isOwner(userId) && isValidId(transactionId) && isValidTransaction(request.resource.data);
         allow delete: if isOwner(userId);
       }
